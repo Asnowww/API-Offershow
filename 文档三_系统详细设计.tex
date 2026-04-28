@@ -1,0 +1,611 @@
+\documentclass[11pt,a4paper]{ctexart}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{tabularx}
+\usepackage{titlesec}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\titleformat{\section}{\Large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{1em}{}
+
+\definecolor{codebg}{RGB}{246,248,250}
+\definecolor{codekw}{RGB}{0,90,160}
+\definecolor{codestr}{RGB}{160,40,40}
+\definecolor{codecmt}{RGB}{90,140,90}
+\lstdefinelanguage{json}{
+    basicstyle=\ttfamily\small,
+    backgroundcolor=\color{codebg},
+    showstringspaces=false,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{black!20},
+    string=[s]{"}{"},
+    stringstyle=\color{codestr},
+    comment=[l]{//},
+    commentstyle=\color{codecmt},
+    morekeywords={true,false,null},
+    keywordstyle=\color{codekw}\bfseries
+}
+\lstset{language=json}
+
+\title{\textbf{Offer Show 微信公众号后台系统\\ 文档三：系统详细设计文档}}
+\author{顾远\quad 23301095}
+\date{2026 年 4 月 27 日}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{文档概述}
+
+\subsection{编写目的}
+本文档基于《文档二：需求文档》中对 Offer Show 小程序"找名企 $\rightarrow$ 名企实习校招"与"查薪资"两大业务模块的需求分析，给出后台系统的总体架构、模块划分、领域模型、数据库设计与对外 API 设计。本文档是后续编码实现（文档四：系统代码）的输入。
+
+\subsection{设计目标}
+\begin{itemize}[leftmargin=2em]
+    \item 完整覆盖需求文档中的全部功能场景；
+    \item 提供标准的 RESTful API（包含 \texttt{get / list / create / update / replace / delete} 六类标准方法）；
+    \item 支持关键字部分检索、批处理、分页、基于 RBAC 的权限控制；
+    \item 易于通过微信公众号 / 移动 H5 / Web 端复用；前端采用 Vue 3 + Vant 4 H5。
+\end{itemize}
+
+\section{系统总体架构}
+
+\subsection{技术选型}
+本项目为单人课程作业，强调"快速落地、易演示、易部署"，最终选型如下表所示：
+
+\begin{tabularx}{\textwidth}{p{3cm}p{4.4cm}X}
+\toprule
+\textbf{层次} & \textbf{选型} & \textbf{理由}\\
+\midrule
+前端 H5（移动版） & Vue 3 + Vant 4 + Vite + Pinia + axios & Vant 4 是面向移动端 H5 的组件库，Tab / List / PullRefresh / Picker 等可直接拼出 Offer Show 风格界面；Vite 构建快。\\
+后端 Web 框架 & Python 3.11 + FastAPI & 异步、类型注解、原生 OpenAPI（Swagger UI / ReDoc）；单人开发效率高。\\
+ORM / 迁移 & SQLAlchemy 2.0 + Alembic & 类型友好的 2.0 风格语法，Alembic 管理 schema 演进。\\
+鉴权 & OAuth2PasswordBearer + JWT（python-jose）& 与 FastAPI 原生集成，Swagger UI 自带"Authorize"按钮便于演示。\\
+分页 & fastapi-pagination & 支持 \texttt{Page} 与 \texttt{LimitOffsetPage} 两种风格，改动极小。\\
+校验 & Pydantic v2 & 与 FastAPI 同源；自动产生 OpenAPI schema。\\
+数据库 & MySQL 8.0（utf8mb4\_0900\_ai\_ci）& 关系清晰，原生 \texttt{FULLTEXT} 满足关键字检索。\\
+缓存 / 限流 & Redis 7 & 限流（slowapi）、JWT 黑名单、排行榜 ZSET、热门列表缓存。\\
+检索 & MySQL FULLTEXT(ngram 分词器) & 一体化部署、零依赖；后期可平滑替换为 Elasticsearch。\\
+API 文档 & FastAPI 内置（\texttt{/docs}、\texttt{/redoc}）& 自动从 Pydantic 生成，演示与对接零成本。\\
+反向代理 & Nginx & 静态资源托管 + HTTPS 终端 + 反代 \texttt{/api/}。\\
+部署 & Docker Compose & 一条命令启动 MySQL / Redis / 后端 / Nginx。\\
+微信对接 & WeChatPy + 公众平台测试号 & 公众号消息回调 / 模板消息推送（早报）。\\
+\bottomrule
+\end{tabularx}
+
+\subsection{逻辑架构}
+系统按职责划分为三层：
+
+\begin{itemize}[leftmargin=2em]
+    \item \textbf{接入层}：移动 H5（微信内 / 普通浏览器均可）、微信公众号消息回调、运营管理页面，统一经 Nginx 反向代理至后端。
+    \item \textbf{应用层（FastAPI 单体）}：按业务模块组织 \texttt{routers/}，包括 \texttt{auth、users、companies、job\_postings、positions、reviews、daily\_briefs、subscriptions、courses、columns、elite\_programs、salary\_reports、salary\_comments、search、wechat}；公共能力放 \texttt{core/}（鉴权、依赖注入、异常处理、限流中间件、风控）。
+    \item \textbf{数据层}：MySQL 8.0（业务数据 + FULLTEXT 索引）、Redis 7（缓存 / 限流 / 黑名单 / 排行榜热度）、本地或对象存储（公司 LOGO、课程封面，开发期可用本地 \texttt{static/} 目录）。
+\end{itemize}
+
+\subsection{后端工程结构（FastAPI）}
+建议采用如下目录组织：
+\begin{lstlisting}[language={}]
+offershow-backend/
+├── app/
+│   ├── main.py              # FastAPI 实例、路由注册、CORS、限流
+│   ├── core/
+│   │   ├── config.py        # pydantic-settings
+│   │   ├── security.py      # JWT 编解码 + OAuth2PasswordBearer
+│   │   ├── deps.py          # get_db / get_current_user / require_role
+│   │   ├── pagination.py    # fastapi-pagination 配置
+│   │   ├── ratelimit.py     # slowapi 限流
+│   │   └── exceptions.py    # 全局异常 -> 统一响应
+│   ├── db/
+│   │   ├── session.py       # async engine / SessionLocal
+│   │   └── base.py          # DeclarativeBase
+│   ├── models/              # SQLAlchemy 2.0 ORM
+│   ├── schemas/             # Pydantic v2
+│   ├── crud/                # 数据访问层
+│   ├── routers/             # 各业务路由
+│   ├── services/            # 复杂业务（搜索、风控、批处理）
+│   └── wechat/              # 公众号消息回调
+├── alembic/
+├── tests/
+├── docker-compose.yml
+└── pyproject.toml
+\end{lstlisting}
+
+\subsection{部署拓扑}
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{docker-compose.yml} 内编排 4 个服务：\texttt{mysql:8.0}、\texttt{redis:7-alpine}、\texttt{backend}（FastAPI + Uvicorn/Gunicorn）、\texttt{nginx}。
+    \item Nginx：\texttt{/} 托管 Vue 打包后的静态文件（\texttt{dist/}），\texttt{/api/} 反代到 \texttt{backend:8000}，\texttt{/wechat/} 反代到公众号回调路径，\texttt{/docs}, \texttt{/redoc}, \texttt{/openapi.json} 透传。
+    \item 后端启动命令：\texttt{gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 4}。
+    \item 异步任务（早报定时推送、批量审核回调）使用 FastAPI 内置 \texttt{BackgroundTasks} 或 APScheduler；规模扩大后可平滑替换为 Celery + Redis broker。
+\end{itemize}
+
+\subsection{微信公众号交互流程}
+\begin{enumerate}[leftmargin=2em]
+    \item 用户在公众号内点击菜单 / 输入关键字 $\rightarrow$ 公众平台推送 XML 到 \texttt{POST /wechat/callback}（WeChatPy 解析）。
+    \item H5 页内：用户首次进入调用 \texttt{POST /api/v1/auth/wx-login}（用 \texttt{code} 换 OpenID）；服务端颁发 JWT 并缓存进 Redis（TTL 2h，可作为黑名单/会话校验依据）。
+    \item 业务请求统一携带 \texttt{Authorization: Bearer <jwt>}，由 FastAPI 依赖 \texttt{get\_current\_user} 解析。
+    \item 早报推送：APScheduler 每日 09:00 触发，对订阅用户调用模板消息接口；失败重试入 Redis 队列。
+\end{enumerate}
+
+\section{领域模型与数据库设计}
+
+\subsection{ER 总览}
+核心实体：\texttt{User}、\texttt{Company}、\texttt{JobPosting}、\texttt{Position}、\texttt{Subscription}、\texttt{Course}、\texttt{Column}、\texttt{Review}、\texttt{EliteProgram}、\texttt{SalaryReport}、\texttt{SalaryColumn}、\texttt{SalaryComment}、\texttt{Industry}、\texttt{City}、\texttt{Batch}（字典）。
+
+\subsection{核心数据表}
+
+\subsubsection{user}
+\begin{longtable}{p{3cm}p{3cm}p{8cm}}
+\toprule
+\textbf{字段} & \textbf{类型} & \textbf{说明}\\
+\midrule
+id & BIGINT PK & 主键\\
+openid & VARCHAR(64) UQ & 微信 OpenID\\
+nickname & VARCHAR(64) & 昵称\\
+avatar & VARCHAR(255) & 头像\\
+role & ENUM & guest / user / member / hr / admin\\
+company\_id & BIGINT & HR 角色绑定的公司\\
+is\_blocked & TINYINT & 是否被封禁\\
+risk\_score & INT & 反作弊风险分（0--100）\\
+created\_at, updated\_at & DATETIME & \\
+\bottomrule
+\end{longtable}
+
+\subsubsection{job\_posting}
+\begin{longtable}{p{3.4cm}p{3cm}p{7.6cm}}
+\toprule
+字段 & 类型 & 说明\\
+\midrule
+id & BIGINT PK & \\
+company\_id & BIGINT FK & 关联 company\\
+title & VARCHAR(128) & 招聘标题\\
+batch & VARCHAR(32) & 招聘批次\\
+recruitment\_type & ENUM & 校招/实习/社招/暑期实习/...\\
+industry\_code & VARCHAR(32) & 关联 industry 字典\\
+cities & JSON & 工作城市数组\\
+deliver\_start, deliver\_end & DATE & 投递起止\\
+graduation\_range & VARCHAR(64) & 招聘届属\\
+apply\_url & VARCHAR(255) & 投递链接\\
+internal\_code & VARCHAR(32) & 内推码\\
+benefits & JSON & 福利标签数组\\
+description & MEDIUMTEXT & 招聘简介\\
+views, interest\_count & INT & 浏览数 / 感兴趣数\\
+status & ENUM & draft / pending / online / offline\\
+created\_by & BIGINT & 创建者 user\_id\\
+created\_at, updated\_at & DATETIME & \\
+\bottomrule
+\end{longtable}
+索引：\texttt{(company\_id)}、\texttt{(recruitment\_type, status, created\_at)}、\texttt{(industry\_code)}、ES 全文索引 \texttt{(title, company\_name)}。
+
+\subsubsection{salary\_report}
+\begin{longtable}{p{3.4cm}p{3cm}p{7.6cm}}
+\toprule
+字段 & 类型 & 说明\\
+\midrule
+id & BIGINT PK & \\
+company\_id & BIGINT FK & \\
+position & VARCHAR(64) & 岗位名\\
+city & VARCHAR(32) & 城市\\
+salary\_desc & VARCHAR(64) & 薪资描述（如 16*16）\\
+annual\_min, annual\_max & DECIMAL(10,2) & 年薪下/上限（万元）\\
+recruitment\_type & ENUM & 校招/实习/社招\\
+education & ENUM & 大专/本科/硕士/博士\\
+edu\_tags & JSON & 985/211/海归 等\\
+industry\_code & VARCHAR(32) & \\
+tags & JSON & \#年终奖 \#签字费 \#工作作息 等\\
+remark & TEXT & 备注\\
+credibility & TINYINT & 可信度 0--100\\
+views, likes & INT & \\
+status & ENUM & pending / online / hidden\\
+author\_id & BIGINT & 提交者\\
+created\_at, updated\_at & DATETIME & \\
+\bottomrule
+\end{longtable}
+索引：\texttt{(company\_id, recruitment\_type)}、\texttt{(status, created\_at)}、ES 索引 \texttt{(company\_name, position, city)}。
+
+\subsubsection{其他表（简述）}
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{company(id, name, logo, industry\_code, intro, ...)}
+    \item \texttt{position(id, posting\_id, name, description)}
+    \item \texttt{review(id, company\_id, user\_id, score, content, status, created\_at)}
+    \item \texttt{subscription(id, user\_id, type[早报/专栏], target\_id, status, created\_at)}
+    \item \texttt{course(id, title, cover, category, price, url, status)}
+    \item \texttt{column(id, name, scope[job/salary], filter\_rule, cover)}
+    \item \texttt{column\_item(column\_id, target\_type, target\_id)}（专栏与招聘/薪资多对多）
+    \item \texttt{elite\_program(id, company\_id, name, salary\_range, description, apply\_url)}
+    \item \texttt{salary\_comment(id, report\_id, user\_id, content, likes, status, created\_at)}
+    \item 字典表：\texttt{industry, city, batch}
+\end{itemize}
+
+\section{API 设计总则}
+
+\subsection{基础约定}
+\begin{itemize}[leftmargin=2em]
+    \item 协议：HTTPS；编码：UTF-8；数据格式：JSON。
+    \item 路径前缀：\texttt{/api/v1}。
+    \item 鉴权：HTTP Header \texttt{Authorization: Bearer <jwt>}。
+    \item 命名风格：资源名小写复数（\texttt{/job-postings}），动作通过 HTTP 方法表达。
+    \item 时间字段统一使用 ISO 8601 字符串。
+\end{itemize}
+
+\subsection{标准方法映射}
+\begin{tabularx}{\textwidth}{p{2cm}p{3cm}X}
+\toprule
+方法 & HTTP & 说明\\
+\midrule
+Get      & GET    /xxx/\{id\}    & 获取单个资源\\
+List     & GET    /xxx          & 列出资源（支持分页 / 过滤 / 关键字）\\
+Create   & POST   /xxx          & 创建资源\\
+Update   & PATCH  /xxx/\{id\}    & 部分字段更新\\
+Replace  & PUT    /xxx/\{id\}    & 整体替换\\
+Delete   & DELETE /xxx/\{id\}    & 删除（软删）\\
+\bottomrule
+\end{tabularx}
+
+\subsection{分页约定}
+List 接口统一支持：
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{page}（从 1 开始，默认 1）、\texttt{page\_size}（默认 20，最大 50）；
+    \item 或基于游标 \texttt{page\_token} 的方式（用于 Feed 流）。
+\end{itemize}
+返回结构：
+\begin{lstlisting}
+{
+  "items": [ ... ],
+  "page": 1,
+  "page_size": 20,
+  "total": 138,
+  "next_page_token": "eyJvZmZzZXQiOjIwfQ=="
+}
+\end{lstlisting}
+
+\subsection{统一响应结构}
+\begin{lstlisting}
+{
+  "code": 0,            // 0 表示成功，其余为错误码
+  "message": "ok",
+  "data": { ... },
+  "request_id": "9b7c..."
+}
+\end{lstlisting}
+
+\subsection{错误码示例}
+\begin{tabularx}{\textwidth}{p{2cm}p{3cm}X}
+\toprule
+code & HTTP & 含义\\
+\midrule
+0      & 200 & 成功\\
+40001  & 400 & 参数错误\\
+40101  & 401 & 未登录 / Token 失效\\
+40301  & 403 & 无权限\\
+40302  & 403 & 风控拦截（疑似爬虫/作弊）\\
+40401  & 404 & 资源不存在\\
+42901  & 429 & 触发限流\\
+50001  & 500 & 系统内部错误\\
+\bottomrule
+\end{tabularx}
+
+\subsection{权限控制}
+基于 RBAC：\texttt{guest} \textless~\texttt{user} \textless~\texttt{member} \textless~\texttt{hr} \textless~\texttt{admin}。
+每个 API 在路由表中标注最小可访问角色，并附加资源所有权约束（HR 仅能写本公司数据，普通用户仅能写本人创建的数据）。
+风控规则在网关层执行：黑名单用户写操作直接 403；高频访问用户触发滑块或临时封禁。
+
+\section{对外 API 详细设计}
+
+\subsection{认证与用户}
+\subsubsection{微信登录}
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+方法 / 路径 & POST \texttt{/api/v1/auth/wx-login}\\
+权限 & 公开\\
+说明 & 用公众号网页授权返回的 \texttt{code} 换取本系统 JWT\\
+\bottomrule
+\end{tabularx}
+\begin{lstlisting}
+// Request
+{ "code": "0c1abcDef..." }
+// Response.data
+{ "token": "eyJhbGc...", "token_type": "bearer", "expires_in": 7200,
+  "user": { "id": 12, "role": "user" } }
+\end{lstlisting}
+另保留 \texttt{POST /api/v1/auth/login}（OAuth2 password flow，仅 admin 后台账号），用于 Swagger UI 内一键登录调试。
+
+\subsubsection{获取当前用户}
+\texttt{GET /api/v1/users/me}（需登录）
+
+\subsubsection{用户管理（管理员）}
+\begin{itemize}[leftmargin=2em]
+    \item Get: \texttt{GET /api/v1/users/\{id\}}
+    \item List: \texttt{GET /api/v1/users?role=hr\&q=keyword\&page=1\&page\_size=20}
+    \item Update: \texttt{PATCH /api/v1/users/\{id\}}（封禁、调整角色）
+    \item Delete: \texttt{DELETE /api/v1/users/\{id\}}
+\end{itemize}
+
+\subsection{公司（Company）}
+\begin{tabularx}{\textwidth}{p{4.2cm}p{3cm}X}
+\toprule
+路径 & 方法 & 权限\\
+\midrule
+/companies & GET & 公开\\
+/companies/\{id\} & GET & 公开\\
+/companies & POST & admin\\
+/companies/\{id\} & PATCH & admin\\
+/companies/\{id\} & PUT & admin\\
+/companies/\{id\} & DELETE & admin\\
+/companies:batchCreate & POST & admin\\
+\bottomrule
+\end{tabularx}
+List 支持参数：\texttt{q}（公司名模糊匹配，如"字节跳动"）、\texttt{industry}、\texttt{page}、\texttt{page\_size}。
+
+\subsection{招聘信息（JobPosting）—— 核心}
+\subsubsection{List 招聘信息}
+\texttt{GET /api/v1/job-postings}\\
+权限：公开（会员可见"提前看"列表）。\\
+查询参数：
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{q}：关键字（公司/标题/岗位），模糊匹配 例 \texttt{q=字节跳动}；
+    \item \texttt{industry}：行业 code；
+    \item \texttt{cities}：逗号分隔，如 \texttt{cities=北京,上海}；
+    \item \texttt{recruitment\_type}：校招/实习/社招/...；
+    \item \texttt{batch}：招聘批次；
+    \item \texttt{sort}：\texttt{latest|hot|deadline}（默认 latest）；
+    \item \texttt{page}, \texttt{page\_size}。
+\end{itemize}
+\begin{lstlisting}
+// Response.data.items[i]
+{
+  "id": 1024,
+  "company": { "id": 7, "name": "极兔速递", "logo": "https://..." },
+  "title": "极兔速递2026全球校园招聘启动",
+  "batch": "春招正式批",
+  "cities": ["上海","苏州","海外"],
+  "industry": "物流/交通运输",
+  "views": 1469,
+  "tags": ["官方直聘","春招正式批"],
+  "created_at": "2026-04-02T10:00:00+08:00"
+}
+\end{lstlisting}
+
+\subsubsection{Get / Create / Update / Replace / Delete}
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{GET    /api/v1/job-postings/\{id\}}（公开）
+    \item \texttt{POST   /api/v1/job-postings}（hr/admin）
+    \item \texttt{PATCH  /api/v1/job-postings/\{id\}}（owner-hr/admin）
+    \item \texttt{PUT    /api/v1/job-postings/\{id\}}（owner-hr/admin）
+    \item \texttt{DELETE /api/v1/job-postings/\{id\}}（owner-hr/admin）
+\end{itemize}
+Create 请求体示例：
+\begin{lstlisting}
+{
+  "company_id": 7,
+  "title": "极兔速递2026全球校园招聘启动",
+  "batch": "春招正式批",
+  "recruitment_type": "campus",
+  "industry_code": "logistics",
+  "cities": ["上海","苏州","海外"],
+  "deliver_start": "2026-04-02",
+  "deliver_end": "2026-07-31",
+  "graduation_range": "2025-09-01~2026-07-31",
+  "apply_url": "https://jtexpress.jobs.feishu.cn/...",
+  "internal_code": "9FB8MFS",
+  "benefits": ["年度奖金","带薪年假","五险一金","节日福利"],
+  "description": "<p>招聘对象...</p>"
+}
+\end{lstlisting}
+
+\subsubsection{批量上传招聘信息}
+\texttt{POST /api/v1/job-postings:batchCreate}（hr/admin）
+\begin{lstlisting}
+{ "items": [ { ...posting1 }, { ...posting2 } ] }
+// Response.data
+{ "success": 18, "failed": 2, "errors": [ {"index": 5, "msg": "city invalid"} ] }
+\end{lstlisting}
+另支持 \texttt{POST /api/v1/job-postings:batchUpdate}、\texttt{:batchDelete}（admin）。
+
+\subsubsection{招聘岗位（Position）子资源}
+\begin{itemize}[leftmargin=2em]
+    \item List: \texttt{GET /api/v1/job-postings/\{id\}/positions}
+    \item Create: \texttt{POST /api/v1/job-postings/\{id\}/positions}（owner-hr）
+    \item Update / Replace / Delete: \texttt{/api/v1/positions/\{pid\}}
+\end{itemize}
+
+\subsection{字典（Industry / City / Batch）}
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{GET /api/v1/industries}、\texttt{GET /api/v1/cities}、\texttt{GET /api/v1/batches}（公开）
+    \item \texttt{POST/PATCH/PUT/DELETE} 仅限 admin
+\end{itemize}
+
+\subsection{求职早报（DailyBrief）与订阅}
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{GET /api/v1/daily-briefs?date=2026-04-27\&page=1}：当日 24h 新招列表（公开）。
+    \item \texttt{POST /api/v1/subscriptions}：用户订阅早报。\\
+    Body: \texttt{\{"type":"daily\_brief"\}}
+    \item \texttt{DELETE /api/v1/subscriptions/\{id\}}：取消订阅。
+    \item \texttt{GET /api/v1/subscriptions/me}：列出本人订阅。
+\end{itemize}
+
+\subsection{求职好课（Course）}
+标准 6 方法 + List 支持 \texttt{category} 过滤、\texttt{q} 关键字检索、分页。写操作仅 admin。
+
+\subsection{求职专栏 / 薪资专栏（Column）}
+\begin{itemize}[leftmargin=2em]
+    \item Get/List/Create/Update/Replace/Delete 共用 \texttt{/api/v1/columns}，通过 \texttt{scope=job|salary} 区分。
+    \item 专栏内容：\texttt{POST /api/v1/columns/\{id\}/items:batchCreate} 批量挂入；\texttt{:batchDelete} 移出。
+    \item 列出专栏内容：\texttt{GET /api/v1/columns/\{id\}/items?page=1\&page\_size=20}。
+\end{itemize}
+
+\subsection{内推集合 / 社招集合}
+均为 \texttt{job-postings} 之上的视图，复用 List 接口：
+\begin{itemize}[leftmargin=2em]
+    \item 内推集合：\texttt{GET /api/v1/job-postings?has\_internal\_code=true}
+    \item 社招集合：\texttt{GET /api/v1/job-postings?recruitment\_type=social}
+\end{itemize}
+
+\subsection{实习点评（Review）}
+\begin{itemize}[leftmargin=2em]
+    \item List 排行榜：\texttt{GET /api/v1/companies:reviewRank?tab=high|low|hot|new\&q=\&page=}
+    \item Get / Create / Update / Replace / Delete：\texttt{/api/v1/reviews/\{id\}}（普通用户仅可操作本人记录；admin 可下架）。
+    \item Create Body: \texttt{\{"company\_id":7,"score":8.5,"content":"实习体验不错"\}}
+\end{itemize}
+
+\subsection{顶尖人才计划（EliteProgram）}
+标准 6 方法 + List 支持 \texttt{q}（公司/计划名模糊）。
+
+\subsection{薪资爆料（SalaryReport）—— 核心}
+\subsubsection{List 薪资爆料}
+\texttt{GET /api/v1/salary-reports}\\
+权限：公开（金额对未登录用户可能脱敏）。\\
+查询参数：\texttt{q}（组合检索：公司/岗位/城市，例 \texttt{q=字节跳动 后端 北京}）、\texttt{recruitment\_type}（campus/intern/social）、\texttt{industry}、\texttt{education}、\texttt{city}、\texttt{salary\_min}、\texttt{salary\_max}、\texttt{sort}（latest/hot/credibility）、\texttt{page}、\texttt{page\_size}。
+
+\begin{lstlisting}
+// Response.data.items[i]
+{
+  "id": 88123,
+  "company": {"id": 12, "name": "百度"},
+  "position": "后端研发",
+  "city": "北京",
+  "salary_desc": "25k*15",
+  "annual_max": 37.5,
+  "education": "硕士",
+  "edu_tags": ["985"],
+  "credibility": 87,
+  "views": 1820,
+  "remark": "包含签字费 5w...",
+  "tags": ["#年终奖","#签字费"],
+  "created_at": "2026-04-25T12:30:00+08:00"
+}
+\end{lstlisting}
+
+\subsubsection{Get / Create / Update / Replace / Delete}
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{GET    /api/v1/salary-reports/\{id\}}：详情，含评论数。
+    \item \texttt{POST   /api/v1/salary-reports}：登录用户提交薪资爆料。
+    \item \texttt{PATCH  /api/v1/salary-reports/\{id\}}：作者本人 / admin。
+    \item \texttt{PUT    /api/v1/salary-reports/\{id\}}：admin（标准化字段）。
+    \item \texttt{DELETE /api/v1/salary-reports/\{id\}}：作者本人 / admin。
+\end{itemize}
+Create 请求体：
+\begin{lstlisting}
+{
+  "company_id": 12,
+  "position": "后端研发",
+  "city": "北京",
+  "salary_desc": "25k*15",
+  "annual_min": 30,
+  "annual_max": 37.5,
+  "recruitment_type": "campus",
+  "education": "硕士",
+  "edu_tags": ["985"],
+  "industry_code": "internet",
+  "tags": ["#年终奖","#签字费"],
+  "remark": "签字费 5w，按 15 薪折算。"
+}
+\end{lstlisting}
+
+\subsubsection{批量导入薪资爆料}
+\texttt{POST /api/v1/salary-reports:batchCreate}（admin，运营导入）
+
+\subsubsection{薪资人气榜}
+\texttt{GET /api/v1/salary-reports:rank?period=week|month\&page=1}\\
+返回按热度（浏览 + 点赞 + 评论加权）排序的榜单。
+
+\subsubsection{校招 / 社招视图}
+\begin{itemize}[leftmargin=2em]
+    \item 校招：\texttt{GET /api/v1/salary-reports?recruitment\_type=campus\&...}
+    \item 社招：\texttt{GET /api/v1/salary-reports?recruitment\_type=social\&...}
+\end{itemize}
+
+\subsubsection{薪资爆料评论（SalaryComment）}
+\begin{itemize}[leftmargin=2em]
+    \item List：\texttt{GET /api/v1/salary-reports/\{id\}/comments?page=1}
+    \item Create：\texttt{POST /api/v1/salary-reports/\{id\}/comments}
+    \item Get / Update / Replace / Delete：\texttt{/api/v1/salary-comments/\{cid\}}
+\end{itemize}
+
+\subsection{统一搜索}
+\texttt{GET /api/v1/search?scope=job|salary|company\&q=字节跳动\&page=1\&page\_size=20}\\
+内部走 ES，对前端暴露统一接口；返回结构同对应资源 List。
+
+\section{关键能力实现要点}
+
+\subsection{部分检索（关键字）}
+\begin{itemize}[leftmargin=2em]
+    \item 直接使用 \textbf{MySQL 8.0 FULLTEXT} 索引，配合 \texttt{ngram} 分词器（\texttt{ngram\_token\_size=2}），可较好支持中文公司名、岗位、城市的 2-gram 子串匹配。
+    \item 在 \texttt{job\_posting(title, description)}、\texttt{salary\_report(position, remark)}、\texttt{company(name, intro)} 上建 \texttt{FULLTEXT} 索引；\texttt{company.name} 同时保留 B+Tree 索引用于精确等值。
+    \item SQL 写法：\texttt{MATCH(title) AGAINST(:q IN BOOLEAN MODE)}，结合 \texttt{IN BOOLEAN MODE} 支持 \texttt{+字节 +跳动} 这样的多 token AND。
+    \item 跨表搜索（统一 \texttt{/search} 接口）在服务层并行三次查询并按相关度（\texttt{score = MATCH... AGAINST}）合并。
+    \item 后期若数据量增长，可平滑切换为 Elasticsearch + ik 分词，对外 API 保持不变。
+\end{itemize}
+
+\subsection{批处理}
+\begin{itemize}[leftmargin=2em]
+    \item 路径动作风格：\texttt{POST /resource:batchCreate}、\texttt{:batchUpdate}、\texttt{:batchDelete}。
+    \item 在 FastAPI 中以独立 router 实现，请求 / 响应 schema 由 Pydantic 复用单条结构（\texttt{List[CreateIn]}）。
+    \item 单批最多 200 条；超出在 Pydantic 层校验失败返回 422。
+    \item 失败容忍策略：默认部分成功（返回每条结果索引与错误信息）；通过查询参数 \texttt{?atomic=true} 切换为整批 SQLAlchemy 事务，任一失败回滚。
+\end{itemize}
+
+\subsection{分页}
+\begin{itemize}[leftmargin=2em]
+    \item 引入 \textbf{fastapi-pagination}：\texttt{Page[ItemOut]} 自动暴露 \texttt{page} / \texttt{size} / \texttt{total} / \texttt{pages}。
+    \item Feed 流（薪资爆料 \texttt{/salary-reports}、早报 \texttt{/daily-briefs}）使用游标分页（\texttt{LimitOffsetPage} 或自定义 cursor），返回 \texttt{next\_page\_token}。
+    \item SQL 深翻优化：\texttt{WHERE id < :last\_id ORDER BY id DESC LIMIT :n}（seek-method）替代大 offset。
+\end{itemize}
+
+\subsection{权限控制与反作弊}
+\begin{itemize}[leftmargin=2em]
+    \item JWT 由 \texttt{python-jose} 签发，Claims：\texttt{sub(uid), role, company\_id, is\_blocked, exp}。
+    \item FastAPI 依赖项实现：\texttt{get\_current\_user(token: str = Depends(oauth2\_scheme))}；角色限制用 \texttt{Depends(require\_role("hr"))} 装饰器化。
+    \item 资源所有权：在 CRUD 层 \texttt{assert\_owner\_or\_admin(obj, current\_user)} 工具函数统一校验，违规抛 \texttt{HTTPException(403, 40301)}。
+    \item 黑名单：登出 / 封禁时把 \texttt{jti} 写 Redis（TTL 与 token 同步），\texttt{get\_current\_user} 命中即拒绝。
+    \item 限流：\textbf{slowapi}（基于 limits + Redis 后端）按 \texttt{(uid, ip)} 维度，公开 List 游客 60 req/min、登录用户 300 req/min；写接口默认 30 req/min。
+    \item 反爬：未登录访问关键 List 时强制带 \texttt{captcha\_token}（图形验证码 token 存 Redis，5 分钟 TTL）；UA 异常 / 高频 IP 触发滑块。
+    \item 反作弊（薪资）：金额偏离同公司同岗位中位数 \textgreater~3$\sigma$、24h 内同账号提交 \textgreater~5 条、相同设备多账号，自动进入 \texttt{status=pending} 审核队列并降低 \texttt{credibility}；规则在 \texttt{services/risk.py} 中实现。
+\end{itemize}
+
+\subsection{微信公众号能力对接（WeChatPy）}
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{POST /wechat/callback}：用 \texttt{wechatpy.parse\_message} 解析 XML，订阅事件写入 \texttt{subscription} 表，关键字消息转发至 \texttt{/api/v1/search} 并以图文消息回复前 5 条。
+    \item 早报推送：APScheduler 每日 09:00 定时任务，遍历 \texttt{subscription.type=daily\_brief}，调用模板消息接口；失败入 Redis 重试队列。
+    \item 公众号 access\_token：用 WeChatPy 的 \texttt{RedisStorage} 缓存，避免重复刷新。
+\end{itemize}
+
+\subsection{前端（Vue 3 + Vant 4）要点}
+\begin{itemize}[leftmargin=2em]
+    \item 路由：vue-router；状态：Pinia；HTTP：axios（统一拦截器注入 \texttt{Authorization}、统一处理 \texttt{code != 0}）。
+    \item 组件复用：\texttt{<van-search>} 顶部搜索、\texttt{<van-tabs>} 切换校招/实习/社招、\texttt{<van-list>} + \texttt{<van-pull-refresh>} 实现下拉刷新与上拉分页加载（对接 \texttt{page+page\_size}）。
+    \item OpenAPI 同步：用 \textbf{openapi-typescript} 从 \texttt{/openapi.json} 直接生成 TypeScript 类型与 axios 调用，前后端 schema 强一致。
+    \item 视口：\texttt{<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">}，配合 \texttt{postcss-px-to-viewport} 适配多机型。
+\end{itemize}
+
+\section{需求与作业要求映射}
+
+\begin{tabularx}{\textwidth}{p{3.5cm}X}
+\toprule
+作业要求 & 实现位置\\
+\midrule
+标准方法 (30 分) & \S 5：JobPosting / SalaryReport / Company / Review / Course / Column / EliteProgram 等核心资源均提供 get/list/create/update/replace/delete\\
+部分检索 (10 分) & \S 5.13 统一搜索；输入"字节跳动"返回招聘 / 薪资 / 公司列表\\
+批处理 (10 分) & \S 5.4.3、\S 5.10.3：\texttt{:batchCreate / :batchUpdate / :batchDelete}\\
+分页 (10 分) & \S 4.3：\texttt{page + page\_size} 与 \texttt{page\_token} 两种模式，全部 List 接口生效\\
+权限控制 (10 分) & \S 4.6 与 \S 6.4：RBAC + 资源所有权 + 反作弊 + 反爬\\
+\bottomrule
+\end{tabularx}
+
+\section{后续工作}
+\begin{itemize}[leftmargin=2em]
+    \item 文档四：基于本设计完成后台代码实现，并通过微信公众号验证完整链路。
+    \item 后续可扩展：日程同步（"加入日程"功能）、消息中心、数据看板（招聘/薪资统计）。
+\end{itemize}
+
+\end{document}
