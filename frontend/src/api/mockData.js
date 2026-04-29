@@ -225,6 +225,35 @@ function makeSalaryReports() {
       created_at: '2026-04-' + String(1 + (i % 26)).padStart(2,'0'),
     })
   }
+  const bytedance = companyTpl.find(c => c.name === '字节跳动')
+  const byteTypes = ['campus', 'intern', 'social']
+  const bytePositions = ['后端研发','前端研发','算法工程师','产品经理','客户端开发','数据分析']
+  byteTypes.forEach((rt, typeIndex) => {
+    bytePositions.forEach((p, k) => {
+      const monthly = 22 + typeIndex * 4 + k
+      const months = 14 + (k % 4)
+      const annualMax = +(monthly * months / 10).toFixed(2)
+      list.push({
+        id: id++,
+        company: { id: bytedance.id, name: bytedance.name, logo_text: bytedance.logo_text, logo_color: bytedance.logo_color },
+        position: p,
+        city: cities[(typeIndex * 6 + k) % cities.length],
+        salary_desc: `${monthly}k*${months}`,
+        annual_min: +(annualMax * 0.85).toFixed(2),
+        annual_max: annualMax,
+        recruitment_type: rt,
+        education: eduOpts[(typeIndex + k) % eduOpts.length],
+        edu_tags: eduTagPool.slice(0, ((typeIndex + k) % 3) + 1),
+        industry: bytedance.industry,
+        tags: tagsPool.slice(0, (k % 4) + 1),
+        remark: ['校招 SP 批次，面试节奏较快。','技术面较深入，base 竞争力强。','业务线选择较多，成长空间大。'][typeIndex],
+        credibility: 82 + ((typeIndex * 6 + k) % 15),
+        views: 1800 + typeIndex * 300 + k * 77,
+        likes: 30 + typeIndex * 10 + k,
+        created_at: '2026-04-' + String(20 + k).padStart(2,'0'),
+      })
+    })
+  })
   return list
 }
 

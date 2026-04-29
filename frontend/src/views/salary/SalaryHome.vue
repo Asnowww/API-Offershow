@@ -8,7 +8,7 @@
       </van-tabs>
       <div class="search-bar">
         <van-icon name="search" />
-        <input v-model="q" placeholder="请输入公司名 + 岗位/城市" @keyup.enter="reload" />
+        <input v-model="q" placeholder="请输入公司名 + 岗位/城市" @input="onSearchInput" @keyup.enter="reload(1)" />
       </div>
       <div class="entries">
         <div class="ent" @click="$router.push('/salary/report')">
@@ -32,10 +32,10 @@
     </div>
 
     <div class="section-h">最新爆料</div>
-    <van-pull-refresh v-model="refreshing" @refresh="reload">
-      <van-list v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="loadMore">
-        <SalaryCard v-for="r in items" :key="r.id" :item="r" />
-      </van-list>
+    <van-pull-refresh v-model="refreshing" @refresh="reload(1)">
+      <SalaryCard v-for="r in items" :key="r.id" :item="r" />
+      <div v-if="!items.length && !loading" class="empty">暂无匹配薪资数据</div>
+      <PaginationBar :page="page" :pages="pages" @change="reload" />
     </van-pull-refresh>
   </div>
 </template>
@@ -44,33 +44,36 @@
 import { ref, watch } from 'vue'
 import { salaryApi, columnApi } from '@/api'
 import SalaryCard from '@/components/SalaryCard.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const rt = ref('campus')
 const q = ref('')
 const items = ref([])
 const cols = ref([])
-const page = ref(0)
+const page = ref(1)
+const pages = ref(0)
 const loading = ref(false)
-const finished = ref(false)
 const refreshing = ref(false)
+let searchTimer = null
 
-async function reload() {
-  page.value = 0
-  finished.value = false
-  items.value = []
-  await loadMore()
+async function reload(nextPage = 1) {
+  page.value = nextPage
+  loading.value = true
+  const data = await salaryApi.list({ recruitment_type: rt.value, q: q.value, page: page.value, page_size: 5 })
+  items.value = data.items
+  pages.value = data.pages
+  loading.value = false
   refreshing.value = false
 }
-async function loadMore() {
-  page.value += 1
-  const data = await salaryApi.list({ recruitment_type: rt.value, q: q.value, page: page.value, page_size: 10 })
-  items.value.push(...data.items)
-  loading.value = false
-  if (!data.has_more) finished.value = true
+
+function onSearchInput() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => reload(1), 300)
 }
+
 columnApi.list({ scope: 'salary' }).then(d => cols.value = d.items)
-watch(rt, reload)
-reload()
+watch(rt, () => reload(1))
+reload(1)
 </script>
 
 <style scoped lang="scss">
@@ -100,4 +103,5 @@ reload()
     border-radius: 8px; font-size: 13px; font-weight: 600;
   }
 }
+.empty { text-align: center; color: var(--os-text-3); font-size: 13px; padding: 36px 0; }
 </style>

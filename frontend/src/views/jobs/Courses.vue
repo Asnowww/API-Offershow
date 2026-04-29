@@ -14,6 +14,7 @@
         <div class="price">¥{{ c.price }}</div>
       </div>
     </div>
+    <PaginationBar :page="page" :pages="pages" @change="load" />
   </div>
 </template>
 
@@ -21,16 +22,21 @@
 import { ref, watch } from 'vue'
 import { courseApi } from '@/api'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const categories = ['全部课程','求职必备','行业好课','求职陪跑']
 const cat = ref('全部课程')
 const items = ref([])
+const page = ref(1)
+const pages = ref(0)
 
-async function load() {
-  const data = await courseApi.list({ category: cat.value, page: 1, page_size: 30 })
+async function load(nextPage = 1) {
+  page.value = nextPage
+  const data = await courseApi.list({ category: cat.value, page: page.value, page_size: 5 })
   items.value = data.items
+  pages.value = data.pages
 }
-watch(cat, load, { immediate: true })
+watch(cat, () => load(1), { immediate: true })
 </script>
 
 <style scoped lang="scss">

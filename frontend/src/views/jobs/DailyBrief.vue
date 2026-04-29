@@ -27,8 +27,9 @@
       <van-button size="small" round type="primary">立即进群</van-button>
     </div>
 
-    <div class="section-h">24h 新招（{{ items.length }}）</div>
+    <div class="section-h">24h 新招（{{ total }}）</div>
     <JobCard v-for="j in items" :key="j.id" :job="j" />
+    <PaginationBar :page="page" :pages="pages" @change="load" />
   </div>
 </template>
 
@@ -38,8 +39,12 @@ import { showToast } from 'vant'
 import { dailyBriefApi } from '@/api'
 import JobCard from '@/components/JobCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const items = ref([])
+const total = ref(0)
+const page = ref(1)
+const pages = ref(0)
 const subscribed = ref(false)
 const active = ref('today')
 
@@ -54,11 +59,14 @@ async function subscribe() {
   showToast(subscribed.value ? '已订阅每日早报' : '已取消订阅')
 }
 
-async function load() {
-  const data = await dailyBriefApi.list({ page: 1, page_size: 30 })
+async function load(nextPage = 1) {
+  page.value = nextPage
+  const data = await dailyBriefApi.list({ page: page.value, page_size: 5 })
   items.value = data.items
+  total.value = data.total
+  pages.value = data.pages
 }
-load()
+load(1)
 </script>
 
 <style scoped lang="scss">

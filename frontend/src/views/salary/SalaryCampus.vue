@@ -2,7 +2,7 @@
   <div class="page">
     <PageHeader title="校招薪资查询" />
     <div class="search">
-      <van-search v-model="q" placeholder="请输入公司名称查询" shape="round" background="transparent" @search="reload" />
+      <van-search v-model="q" placeholder="请输入公司名称查询" shape="round" background="transparent" @search="reload(1)" />
     </div>
     <div class="banners">
       <div class="banner b1">985/211 党专场<div class="sub">高校学生绝佳机会</div></div>
@@ -13,6 +13,8 @@
     </div>
     <div class="section-h">相关爆料</div>
     <SalaryCard v-for="r in items" :key="r.id" :item="r" />
+    <div v-if="!items.length && !loading" class="empty">暂无匹配薪资数据</div>
+    <PaginationBar :page="page" :pages="pages" @change="reload" />
   </div>
 </template>
 
@@ -21,16 +23,24 @@ import { ref } from 'vue'
 import { salaryApi, columnApi } from '@/api'
 import SalaryCard from '@/components/SalaryCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const q = ref('')
 const items = ref([])
 const cols = ref([])
-async function reload() {
-  const d = await salaryApi.list({ recruitment_type: 'campus', q: q.value, page: 1, page_size: 30 })
+const page = ref(1)
+const pages = ref(0)
+const loading = ref(false)
+async function reload(nextPage = 1) {
+  page.value = nextPage
+  loading.value = true
+  const d = await salaryApi.list({ recruitment_type: 'campus', q: q.value, page: page.value, page_size: 5 })
   items.value = d.items
+  pages.value = d.pages
+  loading.value = false
 }
 columnApi.list({ scope: 'salary' }).then(d => cols.value = d.items)
-reload()
+reload(1)
 </script>
 
 <style scoped lang="scss">
@@ -50,4 +60,5 @@ reload()
   }
 }
 .section-h { padding: 14px 14px 6px; font-size: 15px; font-weight: 700; }
+.empty { text-align: center; color: var(--os-text-3); font-size: 13px; padding: 36px 0; }
 </style>

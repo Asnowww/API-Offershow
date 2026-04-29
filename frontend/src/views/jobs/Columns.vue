@@ -13,6 +13,7 @@
         </div>
       </div>
     </div>
+    <PaginationBar :page="page" :pages="pages" @change="load" />
   </div>
 </template>
 
@@ -20,13 +21,18 @@
 import { ref } from 'vue'
 import { columnApi } from '@/api'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const items = ref([])
-async function load() {
-  const data = await columnApi.list({ scope: 'job', page: 1, page_size: 30 })
+const page = ref(1)
+const pages = ref(0)
+async function load(nextPage = 1) {
+  page.value = nextPage
+  const data = await columnApi.list({ scope: 'job', page: page.value, page_size: 4 })
   items.value = data.items
+  pages.value = data.pages
 }
-load()
+load(1)
 </script>
 
 <style scoped lang="scss">

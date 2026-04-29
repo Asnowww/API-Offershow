@@ -6,8 +6,9 @@
       <div class="desc">{{ col.desc }}</div>
       <div class="stats">{{ total }} 条爆料</div>
     </div>
-    <div v-if="!items.length" class="empty">该专栏暂无数据</div>
+    <div v-if="!items.length && !loading" class="empty">该专栏暂无数据</div>
     <SalaryCard v-for="r in items" :key="r.id" :item="r" />
+    <PaginationBar :page="page" :pages="pages" @change="loadItems" />
   </div>
 </template>
 
@@ -18,17 +19,29 @@ import { columnApi } from '@/api'
 import { salaryColumns } from '@/api/mockData'
 import SalaryCard from '@/components/SalaryCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const route = useRoute()
 const col = ref(null)
 const items = ref([])
 const total = ref(0)
+const page = ref(1)
+const pages = ref(0)
+const loading = ref(false)
+
+async function loadItems(nextPage = 1) {
+  page.value = nextPage
+  loading.value = true
+  const data = await columnApi.salaryItems(route.params.id, { page: page.value, page_size: 5 })
+  items.value = data.items
+  total.value = data.total
+  pages.value = data.pages
+  loading.value = false
+}
 
 async function load() {
   col.value = salaryColumns.find(c => c.id === Number(route.params.id))
-  const data = await columnApi.salaryItems(route.params.id, { page: 1, page_size: 50 })
-  items.value = data.items
-  total.value = data.total
+  await loadItems(1)
 }
 load()
 </script>

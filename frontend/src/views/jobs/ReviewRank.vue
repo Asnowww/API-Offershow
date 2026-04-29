@@ -4,9 +4,9 @@
     <div class="hero">
       <div class="hero-title">实习点评榜</div>
       <div class="hero-stats">3,304 人次打分 · 110,678 人次浏览</div>
-      <van-search v-model="q" placeholder="输入你想搜索的企业名称" shape="round" background="transparent" @search="reload" />
+      <van-search v-model="q" placeholder="输入你想搜索的企业名称" shape="round" background="transparent" @search="reload(1)" />
     </div>
-    <van-tabs v-model:active="tab" line-width="20px" color="#1E6EFF" @change="reload">
+    <van-tabs v-model:active="tab" line-width="20px" color="#1E6EFF" @change="reload(1)">
       <van-tab title="高分" name="high" />
       <van-tab title="低分" name="low" />
       <van-tab title="热门" name="hot" />
@@ -26,6 +26,7 @@
         </div>
       </div>
     </div>
+    <PaginationBar :page="page" :pages="pages" @change="reload" />
   </div>
 </template>
 
@@ -34,14 +35,19 @@ import { ref } from 'vue'
 import { reviewApi } from '@/api'
 import CompanyLogo from '@/components/CompanyLogo.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const tab = ref('high')
 const q = ref('')
 const items = ref([])
+const page = ref(1)
+const pages = ref(1)
 
-async function reload() {
-  const data = await reviewApi.rank({ tab: tab.value, q: q.value, page: 1, page_size: 50 })
+async function reload(nextPage = 1) {
+  page.value = nextPage
+  const data = await reviewApi.rank({ tab: tab.value, q: q.value, page: page.value, page_size: 10 })
   items.value = data.items
+  pages.value = data.pages || 1
 }
 function rankClass(r) { return r === 1 ? 'g' : r === 2 ? 's' : r === 3 ? 'b' : '' }
 reload()

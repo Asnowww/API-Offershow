@@ -5,13 +5,13 @@
       <div class="big">薪资人气榜</div>
       <div class="stats">累计 205,260 人次浏览 · 数据来自社区匿名爆料</div>
     </div>
-    <van-tabs v-model:active="period" line-width="20px" color="#1E6EFF" @change="reload">
+    <van-tabs v-model:active="period" line-width="20px" color="#1E6EFF" @change="reload(1)">
       <van-tab title="周榜" name="week" />
       <van-tab title="月榜" name="month" />
     </van-tabs>
     <div class="list">
       <div v-for="(r, i) in items" :key="r.id" class="row">
-        <div class="rank" :class="rankClass(i+1)">No.{{ i+1 }}</div>
+        <div class="rank" :class="rankClass(rankNo(i))">No.{{ rankNo(i) }}</div>
         <CompanyLogo :text="r.company.logo_text" :color="r.company.logo_color" :size="38" />
         <div class="col">
           <div class="cn">{{ r.company.name }} · {{ r.position }}</div>
@@ -23,6 +23,7 @@
         </div>
       </div>
     </div>
+    <PaginationBar :page="page" :pages="pages" @change="reload" />
   </div>
 </template>
 
@@ -31,15 +32,22 @@ import { ref } from 'vue'
 import { salaryApi } from '@/api'
 import CompanyLogo from '@/components/CompanyLogo.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const period = ref('week')
 const items = ref([])
-async function reload() {
-  const data = await salaryApi.rank({ period: period.value, page: 1, page_size: 30 })
+const page = ref(1)
+const pages = ref(0)
+const pageSize = 10
+async function reload(nextPage = 1) {
+  page.value = nextPage
+  const data = await salaryApi.rank({ period: period.value, page: page.value, page_size: pageSize })
   items.value = data.items
+  pages.value = data.pages
 }
+function rankNo(index) { return (page.value - 1) * pageSize + index + 1 }
 function rankClass(r) { return r === 1 ? 'g' : r === 2 ? 's' : r === 3 ? 'b' : '' }
-reload()
+reload(1)
 </script>
 
 <style scoped lang="scss">

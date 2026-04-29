@@ -21,6 +21,7 @@
       <div class="desc">{{ e.description }}</div>
       <van-button block size="small" round type="primary" @click="open(e.apply_url)">查看详情</van-button>
     </div>
+    <PaginationBar :page="page" :pages="pages" @change="load" />
   </div>
 </template>
 
@@ -29,11 +30,16 @@ import { ref } from 'vue'
 import { eliteApi } from '@/api'
 import CompanyLogo from '@/components/CompanyLogo.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const items = ref([])
-async function load() {
-  const data = await eliteApi.list({ page: 1, page_size: 30 })
+const page = ref(1)
+const pages = ref(1)
+async function load(nextPage = 1) {
+  page.value = nextPage
+  const data = await eliteApi.list({ page: page.value, page_size: 2 })
   items.value = data.items
+  pages.value = data.pages || 1
 }
 function open(url) { window.open(url, '_blank') }
 load()

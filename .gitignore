@@ -6,6 +6,8 @@ dist/
 npm-debug.log*
 .env.local
 .env.*.local
+.runtime/
+*.pid
 
 # Editor / OS
 .DS_Store

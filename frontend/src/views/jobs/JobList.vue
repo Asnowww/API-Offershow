@@ -7,9 +7,9 @@
         <span class="tab">榜单求职</span>
         <span class="tab">品牌馆</span>
       </div>
-      <div class="search-bar" @click="onSearch">
+      <div class="search-bar">
         <van-icon name="search" />
-        <span class="ph">校招信息持续更新中…</span>
+        <input v-model="filter.q" placeholder="校招信息持续更新中…" @input="onSearchInput" @keyup.enter="reload(1)" />
       </div>
 
       <!-- 大入口卡 -->
@@ -53,15 +53,15 @@
         v-for="i in industries"
         :key="i.code"
         :class="['ind', { active: i.code === filter.industry }]"
-        @click="filter.industry = i.code; reload()"
+        @click="filter.industry = i.code; reload(1)"
       >{{ i.name }}</div>
     </div>
 
     <!-- 排序 / 二级筛选 -->
     <div class="sort-bar">
-      <span :class="{active: filter.sort==='latest'}" @click="filter.sort='latest'; reload()">最新</span>
-      <span :class="{active: filter.sort==='hot'}" @click="filter.sort='hot'; reload()">热门</span>
-      <span :class="{active: filter.sort==='deadline'}" @click="filter.sort='deadline'; reload()">即将截止</span>
+      <span :class="{active: filter.sort==='latest'}" @click="filter.sort='latest'; reload(1)">最新</span>
+      <span :class="{active: filter.sort==='hot'}" @click="filter.sort='hot'; reload(1)">热门</span>
+      <span :class="{active: filter.sort==='deadline'}" @click="filter.sort='deadline'; reload(1)">即将截止</span>
       <span class="grow"></span>
       <span class="filter-btn" @click="showCity = true">
         城市<van-icon name="arrow-down" />
@@ -77,15 +77,10 @@
     </div>
 
     <!-- 招聘列表 -->
-    <van-pull-refresh v-model="refreshing" @refresh="reload">
-      <van-list
-        v-model:loading="loading"
-        :finished="finished"
-        finished-text="没有更多了"
-        @load="loadMore"
-      >
-        <JobCard v-for="j in items" :key="j.id" :job="j" />
-      </van-list>
+    <van-pull-refresh v-model="refreshing" @refresh="reload(1)">
+      <JobCard v-for="j in items" :key="j.id" :job="j" />
+      <div v-if="!items.length && !loading" class="empty">暂无匹配招聘信息</div>
+      <PaginationBar :page="page" :pages="pages" @change="reload" />
     </van-pull-refresh>
 
     <!-- 城市选择弹层 -->
@@ -102,7 +97,7 @@
         </div>
         <div class="popup-foot">
           <van-button block plain @click="filter.cities = []">重置</van-button>
-          <van-button block type="primary" @click="showCity=false; reload()">确定</van-button>
+          <van-button block type="primary" @click="showCity=false; reload(1)">确定</van-button>
         </div>
       </div>
     </van-popup>
@@ -130,7 +125,7 @@
         </div>
         <div class="popup-foot">
           <van-button block plain @click="resetMore">重置</van-button>
-          <van-button block type="primary" @click="showMore=false; reload()">确定</van-button>
+          <van-button block type="primary" @click="showMore=false; reload(1)">确定</van-button>
         </div>
       </div>
     </van-popup>
@@ -139,43 +134,37 @@
 
 <script setup>
 import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
 import { jobApi } from '@/api'
 import { industries, cities as cityList, batches } from '@/api/mockData'
 import JobCard from '@/components/JobCard.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 import { showToast } from 'vant'
 
-const router = useRouter()
 const filter = reactive({ industry: 'all', cities: [], batch: '不限', sort: 'latest', q: '' })
 const items = ref([])
-const page = ref(0)
+const page = ref(1)
+const pages = ref(0)
 const loading = ref(false)
-const finished = ref(false)
 const refreshing = ref(false)
 const totalCount = ref(0)
 const showCity = ref(false)
 const showMore = ref(false)
+let searchTimer = null
 
-async function reload() {
-  page.value = 0
-  finished.value = false
-  items.value = []
-  await loadMore()
+async function reload(nextPage = 1) {
+  page.value = nextPage
+  loading.value = true
+  const data = await jobApi.list({ ...filter, page: page.value, page_size: 5 })
+  items.value = data.items
+  totalCount.value = data.total
+  pages.value = data.pages
+  loading.value = false
   refreshing.value = false
 }
 
-async function loadMore() {
-  page.value += 1
-  const data = await jobApi.list({ ...filter, page: page.value, page_size: 10 })
-  items.value.push(...data.items)
-  totalCount.value = data.total
-  loading.value = false
-  if (!data.has_more) finished.value = true
-}
-
-function onSearch() {
-  router.push({ name: 'jobs', query: { search: 1 } })
-  showToast('搜索：试试输入"字节跳动"')
+function onSearchInput() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => reload(1), 300)
 }
 function goRank() { showToast('招聘人气榜：开发演示版') }
 function toggleCity(c) {
@@ -185,7 +174,7 @@ function toggleCity(c) {
 }
 function resetMore() { filter.industry = 'all'; filter.batch = '不限' }
 
-reload()
+reload(1)
 </script>
 
 <style scoped lang="scss">
@@ -204,7 +193,8 @@ reload()
   background: rgba(255,255,255,.85); border-radius: 22px;
   height: 36px; padding: 0 14px; display: flex; align-items: center; gap: 6px;
   color: var(--os-text-3); font-size: 13px;
-  .ph { color: var(--os-text-3); }
+  input { flex: 1; border: none; outline: none; background: transparent; font-size: 13px; color: var(--os-text); }
+  input::placeholder { color: var(--os-text-3); }
 }
 .big-cards {
   display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px;
@@ -255,4 +245,5 @@ reload()
   &.active { background: #E3EEFF; color: var(--os-primary); }
 }
 .popup-foot { display: flex; gap: 10px; padding-top: 6px; }
+.empty { text-align: center; color: var(--os-text-3); font-size: 13px; padding: 36px 0; }
 </style>

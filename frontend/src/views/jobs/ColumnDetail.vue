@@ -10,6 +10,7 @@
       </div>
     </div>
     <JobCard v-for="j in items" :key="j.id" :job="j" />
+    <PaginationBar :page="page" :pages="pages" @change="loadItems" />
   </div>
 </template>
 
@@ -19,14 +20,22 @@ import { useRoute } from 'vue-router'
 import { columnApi } from '@/api'
 import JobCard from '@/components/JobCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const route = useRoute()
 const col = ref(null)
 const items = ref([])
+const page = ref(1)
+const pages = ref(0)
+async function loadItems(nextPage = 1) {
+  page.value = nextPage
+  const data = await columnApi.items(route.params.id, { page: page.value, page_size: 5 })
+  items.value = data.items
+  pages.value = data.pages
+}
 async function load() {
   col.value = await columnApi.get(route.params.id)
-  const data = await columnApi.items(route.params.id, { page: 1, page_size: 30 })
-  items.value = data.items
+  await loadItems(1)
 }
 load()
 </script>

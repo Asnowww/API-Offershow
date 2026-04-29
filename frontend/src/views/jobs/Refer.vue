@@ -3,6 +3,7 @@
     <PageHeader title="OfferShow 内推合集" />
     <div class="banner">📌 带 OfferShow 内推码，简历优先筛选</div>
     <JobCard v-for="j in items" :key="j.id" :job="j" />
+    <PaginationBar :page="page" :pages="pages" @change="load" />
   </div>
 </template>
 
@@ -11,11 +12,16 @@ import { ref } from 'vue'
 import { jobApi } from '@/api'
 import JobCard from '@/components/JobCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const items = ref([])
-async function load() {
-  const data = await jobApi.list({ has_internal_code: true, page: 1, page_size: 30 })
+const page = ref(1)
+const pages = ref(1)
+async function load(nextPage = 1) {
+  page.value = nextPage
+  const data = await jobApi.list({ has_internal_code: true, page: page.value, page_size: 5 })
   items.value = data.items
+  pages.value = data.pages || 1
 }
 load()
 </script>

@@ -22,6 +22,7 @@
       </van-tab>
       <van-tab title="管理列表">
         <JobCard v-for="j in items" :key="j.id" :job="j" />
+        <PaginationBar :page="page" :pages="pages" @change="reload" />
       </van-tab>
     </van-tabs>
   </div>
@@ -33,9 +34,12 @@ import { jobApi } from '@/api'
 import { showSuccessToast } from 'vant'
 import JobCard from '@/components/JobCard.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PaginationBar from '@/components/PaginationBar.vue'
 
 const tab = ref(0)
 const items = ref([])
+const page = ref(1)
+const pages = ref(1)
 const batchResult = ref('')
 const csv = ref('字节跳动2026春招,春招正式批,北京;上海\n腾讯2026春招,春招正式批,深圳')
 const form = reactive({ title: '', batch: '春招正式批', cities: '北京,上海', industry: 'internet', apply_url: 'https://example.com', internal_code: 'OS-DEMO' })
@@ -43,7 +47,7 @@ const form = reactive({ title: '', batch: '春招正式批', cities: '北京,上
 async function create() {
   await jobApi.create({ ...form, cities: form.cities.split(',') })
   showSuccessToast('创建成功')
-  reload()
+  reload(1)
 }
 async function batch() {
   const lines = csv.value.split('\n').filter(Boolean)
@@ -55,9 +59,11 @@ async function batch() {
   batchResult.value = `成功 ${res.success} 条 / 失败 ${res.failed} 条`
   showSuccessToast('批量提交完成')
 }
-async function reload() {
-  const data = await jobApi.list({ page: 1, page_size: 20 })
+async function reload(nextPage = 1) {
+  page.value = nextPage
+  const data = await jobApi.list({ page: page.value, page_size: 5 })
   items.value = data.items
+  pages.value = data.pages || 1
 }
 reload()
 </script>
